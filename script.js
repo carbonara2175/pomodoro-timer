@@ -1,7 +1,7 @@
 // タイマーの長さを秒で管理します。長時間休憩を追加するときも、この設定を拡張できます。
 const TIMER_SETTINGS = {
-  focus: 25 * 60,
-  break: 5 * 60,
+  normal: { focus: 25 * 60, break: 5 * 60 },
+  test: { focus: 10, break: 5 },
   goal: 4,
 };
 
@@ -14,14 +14,21 @@ const elements = {
   start: document.querySelector("#start-button"),
   pause: document.querySelector("#pause-button"),
   reset: document.querySelector("#reset-button"),
+  test: document.querySelector("#test-button"),
+  testIndicator: document.querySelector("#test-mode-indicator"),
 };
 
+let isTestMode = false;
 let currentMode = "focus";
-let remainingSeconds = TIMER_SETTINGS.focus;
+let remainingSeconds = TIMER_SETTINGS.normal.focus;
 let completedPomodoros = 0;
 let timerId = null;
 let nextTickAt = null;
 let audioContext = null;
+
+function getDurations() {
+  return isTestMode ? TIMER_SETTINGS.test : TIMER_SETTINGS.normal;
+}
 
 function formatTime(totalSeconds) {
   const minutes = Math.floor(totalSeconds / 60);
@@ -44,7 +51,8 @@ function updateDisplay() {
   elements.dots.forEach((dot, index) => {
     dot.classList.toggle("complete", index < completedPomodoros);
   });
-  document.title = `${formattedTime}｜${modeName}｜ポモドーロ`;
+  const testTitle = isTestMode ? "TEST MODE｜" : "";
+  document.title = `${testTitle}${formattedTime}｜${modeName}｜ポモドーロ`;
 }
 
 function setRunningState(isRunning) {
@@ -74,15 +82,15 @@ function switchMode() {
     // 目標の4回に達した後は「4 / 4」の達成表示を保ちます。
     completedPomodoros = Math.min(completedPomodoros + 1, TIMER_SETTINGS.goal);
     currentMode = "break";
-    remainingSeconds = TIMER_SETTINGS.break;
+    remainingSeconds = getDurations().break;
     elements.message.textContent = "集中完了！休憩してリフレッシュしましょう。";
   } else {
     currentMode = "focus";
-    remainingSeconds = TIMER_SETTINGS.focus;
+    remainingSeconds = getDurations().focus;
     elements.message.textContent = "休憩完了！次の集中を始めましょう。";
   }
 
-  document.body.className = `${currentMode}-mode`;
+  updateBodyClasses();
   updateDisplay();
 }
 
@@ -125,16 +133,30 @@ function resetTimer() {
   if (timerId) window.clearInterval(timerId);
   timerId = null;
   currentMode = "focus";
-  remainingSeconds = TIMER_SETTINGS.focus;
+  remainingSeconds = getDurations().focus;
   completedPomodoros = 0;
-  document.body.className = "focus-mode";
+  updateBodyClasses();
   elements.message.textContent = "集中する準備はできましたか？";
   setRunningState(false);
   updateDisplay();
 }
 
+function updateBodyClasses() {
+  document.body.classList.toggle("focus-mode", currentMode === "focus");
+  document.body.classList.toggle("break-mode", currentMode === "break");
+  document.body.classList.toggle("test-mode", isTestMode);
+}
+
+function toggleTestMode() {
+  isTestMode = !isTestMode;
+  elements.test.setAttribute("aria-pressed", String(isTestMode));
+  elements.testIndicator.hidden = !isTestMode;
+  resetTimer();
+}
+
 elements.start.addEventListener("click", startTimer);
 elements.pause.addEventListener("click", pauseTimer);
 elements.reset.addEventListener("click", resetTimer);
+elements.test.addEventListener("click", toggleTestMode);
 
 updateDisplay();
