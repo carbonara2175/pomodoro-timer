@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="25分の集中と5分の休憩を繰り返す、シンプルなポモドーロタイマーです。">
+    <title>25:00｜集中｜ポモドーロ</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="script.js" defer></script>
+  </head>
+  <body class="focus-mode">
+    <main class="timer-card" aria-labelledby="app-title">
+      <header>
+        <p class="eyebrow">POMODORO TIMER</p>
+        <h1 id="app-title">ポモドーロ・テクニックタイマー</h1>
+        <p class="version">v1.0</p>
+      </header>
+
+      <section class="timer" aria-label="タイマー">
+        <p id="mode-label" class="mode-label">
+          <span class="mode-dot" aria-hidden="true"></span>
+          <span id="mode-text">集中</span>
+        </p>
+        <p id="time-display" class="time-display" aria-label="残り時間 25分00秒">25:00</p>
+        <p id="status-message" class="status-message" aria-live="polite">集中する準備はできましたか？</p>
+      </section>
+
+      <section class="progress" aria-label="ポモドーロの進捗">
+        <p id="pomodoro-count" class="pomodoro-count">🍅 0 / 4</p>
+        <div class="progress-dots" aria-hidden="true">
+          <span></span><span></span><span></span><span></span>
+        </div>
+        <p class="progress-help">4回の集中を目指しましょう</p>
+      </section>
+
+      <div class="controls" aria-label="タイマー操作">
+        <button id="start-button" class="button button-primary" type="button">開始</button>
+        <button id="pause-button" class="button button-secondary" type="button" disabled>一時停止</button>
+        <button id="reset-button" class="button button-secondary" type="button">リセット</button>
+      </div>
+    </main>
+  </body>
+</html>
