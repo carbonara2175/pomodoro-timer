@@ -16,15 +16,25 @@ const elements = {
   reset: document.querySelector("#reset-button"),
   test: document.querySelector("#test-button"),
   testIndicator: document.querySelector("#test-mode-indicator"),
+  transition: document.querySelector("#transition-button"),
+};
+
+// 通常の2モードに加え、どちらへの切替を待っているかも明示的に管理します。
+const APP_STATES = {
+  FOCUS: "focus",
+  WAITING_FOR_BREAK: "waiting-for-break",
+  BREAK: "break",
+  WAITING_FOR_FOCUS: "waiting-for-focus",
 };
 
 let isTestMode = false;
-let currentMode = "focus";
+let appState = APP_STATES.FOCUS;
 let remainingSeconds = TIMER_SETTINGS.normal.focus;
 let completedPomodoros = 0;
 let timerId = null;
 let nextTickAt = null;
 let audioContext = null;
+let notificationIntervalId = null;
 
 function getDurations() {
   return isTestMode ? TIMER_SETTINGS.test : TIMER_SETTINGS.normal;
@@ -38,7 +48,8 @@ function formatTime(totalSeconds) {
 
 // 画面とブラウザのタブを、現在の状態に合わせてまとめて更新します。
 function updateDisplay() {
-  const modeName = currentMode === "focus" ? "集中" : "休憩";
+  const isFocusState = appState === APP_STATES.FOCUS || appState === APP_STATES.WAITING_FOR_BREAK;
+  const modeName = isFocusState ? "集中" : "休憩";
   const formattedTime = formatTime(remainingSeconds);
 
   elements.time.textContent = formattedTime;
@@ -51,8 +62,14 @@ function updateDisplay() {
   elements.dots.forEach((dot, index) => {
     dot.classList.toggle("complete", index < completedPomodoros);
   });
-  const testTitle = isTestMode ? "TEST MODE｜" : "";
-  document.title = `${testTitle}${formattedTime}｜${modeName}｜ポモドーロ`;
+  if (appState === APP_STATES.WAITING_FOR_BREAK) {
+    document.title = "🔔 集中終了｜休憩してください｜ポモドーロ";
+  } else if (appState === APP_STATES.WAITING_FOR_FOCUS) {
+    document.title = "🔔 休憩終了｜集中を開始｜ポモドーロ";
+  } else {
+    const testTitle = isTestMode ? "TEST MODE｜" : "";
+    document.title = `${testTitle}${formattedTime}｜${modeName}｜ポモドーロ`;
+  }
 }
 
 function setRunningState(isRunning) {
@@ -75,23 +92,44 @@ function playNotificationSound() {
   oscillator.stop(audioContext.currentTime + 0.35);
 }
 
-function switchMode() {
+// 終了時だけ呼び、短い音を約2秒おきに繰り返します。二重開始はしません。
+function startRepeatingNotification() {
+  if (notificationIntervalId !== null) return;
   playNotificationSound();
+  notificationIntervalId = window.setInterval(playNotificationSound, 2000);
+}
 
-  if (currentMode === "focus") {
-    // 目標の4回に達した後は「4 / 4」の達成表示を保ちます。
+// 次モード開始・リセット・TEST切替のどこからでも、同じ方法で通知を止めます。
+function stopRepeatingNotification() {
+  if (notificationIntervalId === null) return;
+  window.clearInterval(notificationIntervalId);
+  notificationIntervalId = null;
+}
+
+// 00:00になった瞬間にカウントを止め、自動遷移せず「切替待ち」にします。
+function finishTimer() {
+  if (timerId !== null) window.clearInterval(timerId);
+  timerId = null;
+  remainingSeconds = 0;
+
+  if (appState === APP_STATES.FOCUS) {
     completedPomodoros = Math.min(completedPomodoros + 1, TIMER_SETTINGS.goal);
-    currentMode = "break";
-    remainingSeconds = getDurations().break;
-    elements.message.textContent = "集中完了！休憩してリフレッシュしましょう。";
+    appState = APP_STATES.WAITING_FOR_BREAK;
+    elements.message.textContent = "集中終了！休憩しましょう";
+    elements.transition.textContent = "休憩を開始";
   } else {
-    currentMode = "focus";
-    remainingSeconds = getDurations().focus;
-    elements.message.textContent = "休憩完了！次の集中を始めましょう。";
+    appState = APP_STATES.WAITING_FOR_FOCUS;
+    elements.message.textContent = "休憩終了！次の集中を始めましょう";
+    elements.transition.textContent = "集中を開始";
   }
 
+  elements.transition.hidden = false;
+  setRunningState(false);
+  // 切替待ち中は通常の「開始」ではなく、専用ボタンだけを主操作にします。
+  elements.start.disabled = true;
   updateBodyClasses();
   updateDisplay();
+  startRepeatingNotification();
 }
 
 // 時刻との差から残り時間を求め、タブが非表示でも大きくずれにくくします。
@@ -103,12 +141,12 @@ function tick() {
   remainingSeconds = Math.max(0, remainingSeconds - elapsedSeconds);
   nextTickAt += elapsedSeconds * 1000;
 
-  if (remainingSeconds === 0) switchMode();
+  if (remainingSeconds === 0) finishTimer();
   updateDisplay();
 }
 
 function startTimer() {
-  if (timerId) return;
+  if (timerId || appState === APP_STATES.WAITING_FOR_BREAK || appState === APP_STATES.WAITING_FOR_FOCUS) return;
 
   // 音声はユーザー操作後に初期化する必要があります。
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -117,7 +155,7 @@ function startTimer() {
 
   nextTickAt = Date.now() + 1000;
   timerId = window.setInterval(tick, 200);
-  elements.message.textContent = currentMode === "focus" ? "集中しています…" : "休憩中です…";
+  elements.message.textContent = appState === APP_STATES.FOCUS ? "集中しています…" : "休憩中です…";
   setRunningState(true);
 }
 
@@ -132,9 +170,11 @@ function pauseTimer() {
 function resetTimer() {
   if (timerId) window.clearInterval(timerId);
   timerId = null;
-  currentMode = "focus";
+  stopRepeatingNotification();
+  appState = APP_STATES.FOCUS;
   remainingSeconds = getDurations().focus;
   completedPomodoros = 0;
+  elements.transition.hidden = true;
   updateBodyClasses();
   elements.message.textContent = "集中する準備はできましたか？";
   setRunningState(false);
@@ -142,9 +182,30 @@ function resetTimer() {
 }
 
 function updateBodyClasses() {
-  document.body.classList.toggle("focus-mode", currentMode === "focus");
-  document.body.classList.toggle("break-mode", currentMode === "break");
+  const isBreakState = appState === APP_STATES.BREAK || appState === APP_STATES.WAITING_FOR_FOCUS;
+  document.body.classList.toggle("focus-mode", !isBreakState);
+  document.body.classList.toggle("break-mode", isBreakState);
+  document.body.classList.toggle("transition-waiting", appState.includes("waiting"));
   document.body.classList.toggle("test-mode", isTestMode);
+}
+
+// 目立つ切替ボタンで通知を止め、次モードの時間を設定して直ちに開始します。
+function startNextMode() {
+  if (appState === APP_STATES.WAITING_FOR_BREAK) {
+    appState = APP_STATES.BREAK;
+    remainingSeconds = getDurations().break;
+  } else if (appState === APP_STATES.WAITING_FOR_FOCUS) {
+    appState = APP_STATES.FOCUS;
+    remainingSeconds = getDurations().focus;
+  } else {
+    return;
+  }
+
+  stopRepeatingNotification();
+  elements.transition.hidden = true;
+  updateBodyClasses();
+  updateDisplay();
+  startTimer();
 }
 
 function toggleTestMode() {
@@ -158,5 +219,6 @@ elements.start.addEventListener("click", startTimer);
 elements.pause.addEventListener("click", pauseTimer);
 elements.reset.addEventListener("click", resetTimer);
 elements.test.addEventListener("click", toggleTestMode);
+elements.transition.addEventListener("click", startNextMode);
 
 updateDisplay();

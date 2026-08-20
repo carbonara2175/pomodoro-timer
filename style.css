@@ -36,6 +36,16 @@ body.break-mode {
   background: radial-gradient(circle at 50% 15%, #fff 0, var(--background) 48%, #e2ebe6 100%);
 }
 
+/* 終了後の切替待ちは、通常画面と区別できるベル色の枠で知らせます。 */
+body.transition-waiting {
+  --accent: #9a6700;
+  --accent-soft: #fff0b8;
+}
+body.transition-waiting .timer-card {
+  border: 3px solid var(--accent);
+  box-shadow: 0 20px 55px rgba(154, 103, 0, 0.18);
+}
+
 .timer-card {
   width: min(100%, 620px);
   padding: clamp(28px, 6vw, 56px);
@@ -95,6 +105,17 @@ h1 { margin: 0; font-size: clamp(1.15rem, 4vw, 1.6rem); line-height: 1.45; }
 }
 
 .status-message { min-height: 1.5em; margin: 8px 0 0; color: var(--muted); }
+body.transition-waiting .status-message { color: var(--text); font-size: 1.2rem; font-weight: 800; }
+.button-transition {
+  width: min(100%, 360px);
+  min-height: 64px;
+  margin: 22px auto 0;
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  font-size: 1.15rem;
+}
+.button-transition[hidden] { display: none; }
 .progress { margin: 32px auto 0; }
 .pomodoro-count { margin: 0; font-size: 1.2rem; font-weight: 700; }
 
