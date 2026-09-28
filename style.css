@@ -151,6 +151,64 @@ body.transition-waiting .status-message { color: var(--text); font-size: 1.2rem;
   .button-primary { grid-column: 1 / -1; }
 }
 
+/* 高さが限られた仕事用の小窓では、装飾より残り時間と操作を優先します。 */
+@media (max-height: 650px) {
+  body {
+    min-height: 100svh;
+    padding: 8px;
+    display: block;
+    overflow-y: auto;
+  }
+
+  .timer-card {
+    width: min(100%, 620px);
+    margin: 0 auto;
+    padding: 12px 18px;
+    border-radius: 18px;
+  }
+
+  /* タイトル類と補助表示を省き、重要な情報が画面内に収まりやすくします。 */
+  .timer-card > header,
+  .progress-dots,
+  .progress-help { display: none; }
+
+  .timer { margin-top: 0; }
+  .mode-label { padding: 5px 14px; }
+  .time-display {
+    margin: 2px 0 0;
+    font-size: clamp(3.25rem, 16vh, 5.5rem);
+    line-height: 1;
+  }
+  .status-message { margin-top: 3px; }
+  body.transition-waiting .status-message { font-size: 1rem; }
+  .button-transition {
+    min-height: 42px;
+    margin-top: 8px;
+    padding: 7px 12px;
+    font-size: 1rem;
+  }
+  .progress { margin-top: 7px; }
+  .pomodoro-count { font-size: 1rem; }
+  .controls {
+    margin-top: 8px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .button {
+    min-width: 0;
+    min-height: 40px;
+    padding: 7px 5px;
+    border-radius: 9px;
+    font-size: 0.86rem;
+  }
+  .button-primary { grid-column: auto; }
+}
+
+/* 横幅も高さも小さい場合でも4操作を折り返し、横スクロールを防ぎます。 */
+@media (max-height: 650px) and (max-width: 420px) {
+  .controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
 }

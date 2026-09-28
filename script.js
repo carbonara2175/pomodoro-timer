@@ -36,6 +36,43 @@ let nextTickAt = null;
 let audioContext = null;
 let notificationIntervalId = null;
 
+// 通知APIがないブラウザや、拒否済みの環境でもタイマーはそのまま動かします。
+function requestDesktopNotificationPermission() {
+  if (!("Notification" in window) || Notification.permission !== "default") return;
+
+  // 許可確認はブラウザが認めるユーザー操作（最初の「開始」）からだけ行います。
+  try {
+    const permissionRequest = Notification.requestPermission();
+    // 古いブラウザではPromiseが返らないこともあるため、存在するときだけ処理します。
+    permissionRequest?.catch(() => {
+      // 許可画面を出せない環境でも、通知音と画面表示は継続します。
+    });
+  } catch {
+    // HTTPS外などで許可を要求できなくても、タイマーは止めません。
+  }
+}
+
+// 各タイマーの終了時に一度だけ呼び出し、クリック時は既存画面へ戻ろうとします。
+function showDesktopNotification(completedState) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+
+  const isFocusComplete = completedState === APP_STATES.FOCUS;
+  try {
+    const notification = new Notification(isFocusComplete ? "集中終了" : "休憩終了", {
+      body: isFocusComplete ? "休憩を開始してください" : "次の集中を開始してください",
+      tag: `pomodoro-${completedState}-complete`,
+    });
+
+    notification.onclick = () => {
+      notification.close();
+      // OSの制約で最前面にならない場合がありますが、新しいタブは開きません。
+      window.focus();
+    };
+  } catch {
+    // 通知の作成に失敗しても、タイマーや繰り返し通知音には影響させません。
+  }
+}
+
 function getDurations() {
   return isTestMode ? TIMER_SETTINGS.test : TIMER_SETTINGS.normal;
 }
@@ -108,9 +145,13 @@ function stopRepeatingNotification() {
 
 // 00:00になった瞬間にカウントを止め、自動遷移せず「切替待ち」にします。
 function finishTimer() {
+  // intervalの処理が重なっても、切替待ちから再度終了処理へ入らないための防止です。
+  if (appState !== APP_STATES.FOCUS && appState !== APP_STATES.BREAK) return;
+
   if (timerId !== null) window.clearInterval(timerId);
   timerId = null;
   remainingSeconds = 0;
+  const completedState = appState;
 
   if (appState === APP_STATES.FOCUS) {
     completedPomodoros = Math.min(completedPomodoros + 1, TIMER_SETTINGS.goal);
@@ -130,6 +171,8 @@ function finishTimer() {
   updateBodyClasses();
   updateDisplay();
   startRepeatingNotification();
+  // 繰り返すのは音だけです。デスクトップ通知はこの終了処理で1回だけ表示します。
+  showDesktopNotification(completedState);
 }
 
 // 時刻との差から残り時間を求め、タブが非表示でも大きくずれにくくします。
@@ -152,6 +195,8 @@ function startTimer() {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (AudioContextClass && !audioContext) audioContext = new AudioContextClass();
   if (audioContext?.state === "suspended") audioContext.resume();
+
+  requestDesktopNotificationPermission();
 
   nextTickAt = Date.now() + 1000;
   timerId = window.setInterval(tick, 200);
