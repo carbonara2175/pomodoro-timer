@@ -13,7 +13,7 @@
       <header>
         <p class="eyebrow">POMODORO TIMER</p>
         <h1 id="app-title">ポモドーロ・テクニックタイマー</h1>
-        <p class="version">v1.2</p>
+        <p class="version">v2.0</p>
         <p id="test-mode-indicator" class="test-mode-indicator" role="status" hidden>TEST MODE</p>
       </header>
 
@@ -24,15 +24,18 @@
         </p>
         <p id="time-display" class="time-display" aria-label="残り時間 25分00秒">25:00</p>
         <p id="status-message" class="status-message" aria-live="polite">集中する準備はできましたか？</p>
-        <button id="transition-button" class="button button-transition" type="button" hidden></button>
+        <p id="break-message" class="break-message" hidden></p>
+        <div id="extensions" class="extensions" hidden><button id="extend-five" class="button" type="button">＋5分延長</button><button id="extend-ten" class="button" type="button">＋10分延長</button></div>
+        <button id="transition-button" class="button button-transition" type="button">次のステップへ</button>
       </section>
 
       <section class="progress" aria-label="ポモドーロの進捗">
-        <p id="pomodoro-count" class="pomodoro-count">🍅 0 / 4</p>
+        <p id="pomodoro-count" class="pomodoro-count">今日の集中：0回</p>
+        <p id="focus-total" class="progress-help">累計集中時間：0分</p>
         <div class="progress-dots" aria-hidden="true">
           <span></span><span></span><span></span><span></span>
         </div>
-        <p class="progress-help">4回の集中を目指しましょう</p>
+        <p id="set-progress" class="progress-help">セット内の集中：0 / 4</p>
       </section>
 
       <div class="controls" aria-label="タイマー操作">
@@ -41,6 +44,13 @@
         <button id="reset-button" class="button button-secondary" type="button">リセット</button>
         <button id="test-button" class="button button-test" type="button" aria-pressed="false">TEST</button>
       </div>
+      <details class="settings"><summary>設定</summary>
+        <label>プリセット <select id="preset"><option value="standard">標準（25分 / 5分）</option><option value="short">短時間（15分 / 5分）</option><option value="long">長時間（50分 / 10分）</option></select></label>
+        <label><input id="long-enabled" type="checkbox" checked> 4回ごとの長い休憩</label>
+        <label>長い休憩 <select id="long-minutes"><option value="15">15分</option><option value="20">20分</option><option value="30">30分</option></select></label>
+        <p>変更は次のステップから適用します。</p>
+      </details>
+      <p id="save-warning" role="status" hidden>保存できません。ブラウザの保存設定を確認してください。</p>
     </main>
   </body>
 </html>
