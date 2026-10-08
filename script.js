@@ -1,42 +1,169 @@
-// タイマーの長さを秒で管理します。長時間休憩を追加するときも、この設定を拡張できます。
-const TIMER_SETTINGS = {
-  normal: { focus: 25 * 60, break: 5 * 60 },
-  test: { focus: 10, break: 5 },
-  goal: 4,
-};
-
-const elements = {
-  time: document.querySelector("#time-display"),
-  mode: document.querySelector("#mode-text"),
-  message: document.querySelector("#status-message"),
-  count: document.querySelector("#pomodoro-count"),
-  dots: document.querySelectorAll(".progress-dots span"),
-  start: document.querySelector("#start-button"),
-  pause: document.querySelector("#pause-button"),
-  reset: document.querySelector("#reset-button"),
-  test: document.querySelector("#test-button"),
-  testIndicator: document.querySelector("#test-mode-indicator"),
-  transition: document.querySelector("#transition-button"),
-};
-
-// 通常の2モードに加え、どちらへの切替を待っているかも明示的に管理します。
-const APP_STATES = {
-  FOCUS: "focus",
-  WAITING_FOR_BREAK: "waiting-for-break",
-  BREAK: "break",
-  WAITING_FOR_FOCUS: "waiting-for-focus",
-};
-
+"use strict";
+const PRESETS = { standard: [1500, 300], short: [900, 300], long: [3000, 600] };
+const STORAGE_KEY = "pomodoro-v2";
+const $ = id => document.getElementById(id);
+const messages = ["少し席を立ちましょう", "遠くを見て目を休めましょう", "肩や首を軽く動かしましょう", "次の集中に向けて一息つきましょう", "今は休憩時間です。作業から離れましょう"];
+let data = { version: 2, settings: { preset: "standard", longEnabled: true, longMinutes: 15 }, days: {}, setCount: 0, session: null };
+try {
+  const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+  if (saved?.version === 2 && saved.days && PRESETS[saved.settings?.preset] && [15,20,30].includes(saved.settings.longMinutes)) data = saved;
+} catch { /* 保存データが読めない場合もタイマーを使用可能にする */ }
 let isTestMode = false;
-let appState = APP_STATES.FOCUS;
-let remainingSeconds = TIMER_SETTINGS.normal.focus;
-let completedPomodoros = 0;
+let testData = { days: {}, setCount: 0, session: null };
+let session = data.session || newSession("focus");
+let running = false;
+let lastAt = null;
 let timerId = null;
-let nextTickAt = null;
 let audioContext = null;
 let notificationIntervalId = null;
-
-// 通知APIがないブラウザや、拒否済みの環境でもタイマーはそのまま動かします。
+const activeSounds = new Set();
+let breakMessageIndex = 0;
+function store() { return isTestMode ? testData : data; }
+function localDate(at = Date.now()) {
+  const d = new Date(at);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function day(at = Date.now()) {
+  const key = localDate(at);
+  return store().days[key] ||= { completed: 0, focusSeconds: 0 };
+}
+function duration(mode) {
+  if (isTestMode) return mode === "focus" ? 10 : mode === "break" ? 5 : data.settings.longMinutes;
+  return mode === "long-break" ? data.settings.longMinutes * 60 : PRESETS[data.settings.preset][mode === "focus" ? 0 : 1];
+}
+function newSession(mode) {
+  return { mode, remainingMs: duration(mode)*1000, eligible: false, waiting: false, started: false };
+}
+function save() {
+  store().session = session;
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); $("save-warning").hidden = true; }
+  catch { $("save-warning").hidden = false; }
+}
+// 日付をまたぐ区間は端末のローカル深夜で分割。待機・休憩は呼び出さない。
+function recordFocus(from, to) {
+  while (from < to) {
+    const d = new Date(from);
+    const midnight = new Date(d.getFullYear(), d.getMonth(), d.getDate()+1).getTime();
+    const end = Math.min(to, midnight);
+    day(from).focusSeconds += (end-from)/1000;
+    from = end;
+  }
+}
+function sync(now = Date.now()) {
+  if (!running) return;
+  const elapsed = Math.min(session.remainingMs, Math.max(0, now-lastAt));
+  if (session.mode === "focus") recordFocus(lastAt, lastAt+elapsed);
+  session.remainingMs = Math.max(0, session.remainingMs-elapsed);
+  lastAt = now;
+  if (session.remainingMs === 0) finishTimer();
+  save();
+}
+function stopTimer() {
+  running = false;
+  if (timerId !== null) window.clearInterval(timerId);
+  timerId = null;
+}
+function finishTimer() {
+  if (!running || session.waiting) return;
+  stopTimer();
+  session.waiting = true;
+  if (session.mode === "focus") session.eligible = true;
+  startRepeatingNotification();
+  showDesktopNotification(session.mode);
+}
+function formatTime(seconds) {
+  return `${String(Math.floor(seconds/60)).padStart(2,"0")}:${String(seconds%60).padStart(2,"0")}`;
+}
+function render() {
+  const focus = session.mode === "focus";
+  const seconds = Math.ceil(session.remainingMs/1000);
+  const name = focus ? "集中" : session.mode === "long-break" ? "長い休憩" : "短い休憩";
+  $("time-display").textContent = formatTime(seconds);
+  $("time-display").setAttribute("aria-label", `残り時間 ${Math.floor(seconds/60)}分${seconds%60}秒`);
+  $("mode-text").textContent = `${isTestMode ? "TEST・" : ""}${name}`;
+  $("status-message").textContent = session.waiting ? (focus ? "集中終了！延長または休憩へ" : "休憩終了！次の集中へ") : running ? (focus ? "集中しています…" : "休憩中です…") : session.started ? "一時停止中・開始で再開" : "開始を押して始めましょう";
+  $("transition-button").textContent = focus ? "休憩へ進む" : session.waiting ? "次の集中へ" : "休憩スキップ";
+  $("extensions").hidden = !(focus && session.waiting);
+  $("extend-five").textContent = isTestMode ? "＋5秒延長" : "＋5分延長";
+  $("extend-ten").textContent = isTestMode ? "＋10秒延長" : "＋10分延長";
+  $("start-button").disabled = running || session.waiting;
+  $("start-button").textContent = session.started && !session.waiting ? "再開" : "開始";
+  $("pause-button").disabled = !running;
+  $("break-message").hidden = focus;
+  $("break-message").textContent = messages[breakMessageIndex];
+  const today = day();
+  $("pomodoro-count").textContent = `${isTestMode ? "TESTの集中" : "今日の集中"}：${today.completed}回`;
+  const minutes = Math.floor(today.focusSeconds/60);
+  $("focus-total").textContent = isTestMode ? `TEST累計集中時間：${Math.floor(today.focusSeconds)}秒` : `累計集中時間：${minutes >= 60 ? Math.floor(minutes/60)+"時間" : ""}${minutes%60}分`;
+  $("set-progress").textContent = `セット内の集中：${store().setCount} / 4`;
+  document.querySelectorAll(".progress-dots span").forEach((dot,i) => dot.classList.toggle("complete", i<store().setCount));
+  document.body.classList.toggle("focus-mode",focus);
+  document.body.classList.toggle("break-mode",!focus);
+  document.body.classList.toggle("transition-waiting",session.waiting);
+  $("test-button").setAttribute("aria-pressed",String(isTestMode));
+  $("test-mode-indicator").hidden = !isTestMode;
+  document.title = `${isTestMode ? "TEST｜" : ""}${session.waiting ? "🔔 終了" : formatTime(seconds)}｜${name}｜ポモドーロ`;
+}
+function prepareAudio() {
+  try {
+    const Audio = window.AudioContext || window.webkitAudioContext;
+    if (Audio && !audioContext) audioContext = new Audio();
+    if (audioContext?.state === "suspended") audioContext.resume()?.catch(()=>{});
+  } catch { /* 音声が使えなくても進行 */ }
+}
+function startTimer() {
+  if (running || session.waiting) return;
+  prepareAudio();
+  requestDesktopNotificationPermission();
+  running = true;
+  session.started = true;
+  lastAt = Date.now();
+  timerId = window.setInterval(() => { sync(); render(); },200);
+  save(); render();
+}
+function pauseTimer() { sync(); stopTimer(); save(); render(); }
+// 完了回数はセッションを離れる時だけ確定。延長や終了通知では増やさない。
+function closeFocus() {
+  if (session.mode === "focus" && session.eligible) {
+    day().completed++;
+    store().setCount++;
+  }
+}
+function nextStep() {
+  sync(); stopTimer(); stopRepeatingNotification();
+  const previous = session.mode;
+  closeFocus();
+  if (previous === "focus") {
+    const longBreak = data.settings.longEnabled && store().setCount >= 4;
+    session = newSession(longBreak ? "long-break" : "break");
+    if (!longBreak && store().setCount >= 4) store().setCount = 0;
+    breakMessageIndex = (breakMessageIndex+1)%messages.length;
+  } else {
+    if (previous === "long-break") store().setCount = 0;
+    session = newSession("focus");
+  }
+  save(); render();
+}
+function extend(minutes) {
+  if (session.mode !== "focus" || !session.waiting) return;
+  stopRepeatingNotification();
+  session.remainingMs = minutes*(isTestMode ? 1000 : 60000);
+  session.waiting = false;
+  startTimer();
+}
+function resetTimer() {
+  sync(); stopTimer(); stopRepeatingNotification();
+  closeFocus();
+  session = newSession("focus");
+  save(); render();
+}
+function toggleTestMode() {
+  sync(); stopTimer(); stopRepeatingNotification(); save();
+  isTestMode = !isTestMode;
+  if (isTestMode) { testData = { days:{}, setCount:0, session:null }; session = newSession("focus"); }
+  else { session = data.session || newSession("focus"); testData = { days:{}, setCount:0, session:null }; }
+  save(); render();
+}
 function requestDesktopNotificationPermission() {
   if (!("Notification" in window) || Notification.permission !== "default") return;
 
@@ -56,10 +183,10 @@ function requestDesktopNotificationPermission() {
 function showDesktopNotification(completedState) {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
 
-  const isFocusComplete = completedState === APP_STATES.FOCUS;
+  const isFocusComplete = completedState === "focus";
   try {
     const notification = new Notification(isFocusComplete ? "集中終了" : "休憩終了", {
-      body: isFocusComplete ? "休憩を開始してください" : "次の集中を開始してください",
+      body: isFocusComplete ? "休憩へ進むか、集中を延長できます" : "次の集中を開始してください",
       tag: `pomodoro-${completedState}-complete`,
     });
 
@@ -73,48 +200,6 @@ function showDesktopNotification(completedState) {
   }
 }
 
-function getDurations() {
-  return isTestMode ? TIMER_SETTINGS.test : TIMER_SETTINGS.normal;
-}
-
-function formatTime(totalSeconds) {
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
-// 画面とブラウザのタブを、現在の状態に合わせてまとめて更新します。
-function updateDisplay() {
-  const isFocusState = appState === APP_STATES.FOCUS || appState === APP_STATES.WAITING_FOR_BREAK;
-  const modeName = isFocusState ? "集中" : "休憩";
-  const formattedTime = formatTime(remainingSeconds);
-
-  elements.time.textContent = formattedTime;
-  elements.time.setAttribute(
-    "aria-label",
-    `残り時間 ${Math.floor(remainingSeconds / 60)}分${remainingSeconds % 60}秒`,
-  );
-  elements.mode.textContent = modeName;
-  elements.count.textContent = `🍅 ${completedPomodoros} / ${TIMER_SETTINGS.goal}`;
-  elements.dots.forEach((dot, index) => {
-    dot.classList.toggle("complete", index < completedPomodoros);
-  });
-  if (appState === APP_STATES.WAITING_FOR_BREAK) {
-    document.title = "🔔 集中終了｜休憩してください｜ポモドーロ";
-  } else if (appState === APP_STATES.WAITING_FOR_FOCUS) {
-    document.title = "🔔 休憩終了｜集中を開始｜ポモドーロ";
-  } else {
-    const testTitle = isTestMode ? "TEST MODE｜" : "";
-    document.title = `${testTitle}${formattedTime}｜${modeName}｜ポモドーロ`;
-  }
-}
-
-function setRunningState(isRunning) {
-  elements.start.disabled = isRunning;
-  elements.pause.disabled = !isRunning;
-}
-
-// 外部ファイルを使わず、Web Audio APIで短い通知音を作ります。
 function playNotificationSound() {
   if (!audioContext) return;
 
@@ -125,6 +210,8 @@ function playNotificationSound() {
   oscillator.frequency.setValueAtTime(660, audioContext.currentTime);
   gain.gain.setValueAtTime(0.18, audioContext.currentTime);
   gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.35);
+  activeSounds.add(oscillator);
+  oscillator.onended = () => activeSounds.delete(oscillator);
   oscillator.start();
   oscillator.stop(audioContext.currentTime + 0.35);
 }
@@ -138,132 +225,33 @@ function startRepeatingNotification() {
 
 // 次モード開始・リセット・TEST切替のどこからでも、同じ方法で通知を止めます。
 function stopRepeatingNotification() {
+  for (const oscillator of activeSounds) { try { oscillator.stop(); } catch {} }
+  activeSounds.clear();
   if (notificationIntervalId === null) return;
   window.clearInterval(notificationIntervalId);
   notificationIntervalId = null;
 }
 
-// 00:00になった瞬間にカウントを止め、自動遷移せず「切替待ち」にします。
-function finishTimer() {
-  // intervalの処理が重なっても、切替待ちから再度終了処理へ入らないための防止です。
-  if (appState !== APP_STATES.FOCUS && appState !== APP_STATES.BREAK) return;
 
-  if (timerId !== null) window.clearInterval(timerId);
-  timerId = null;
-  remainingSeconds = 0;
-  const completedState = appState;
-
-  if (appState === APP_STATES.FOCUS) {
-    completedPomodoros = Math.min(completedPomodoros + 1, TIMER_SETTINGS.goal);
-    appState = APP_STATES.WAITING_FOR_BREAK;
-    elements.message.textContent = "集中終了！休憩しましょう";
-    elements.transition.textContent = "休憩を開始";
-  } else {
-    appState = APP_STATES.WAITING_FOR_FOCUS;
-    elements.message.textContent = "休憩終了！次の集中を始めましょう";
-    elements.transition.textContent = "集中を開始";
-  }
-
-  elements.transition.hidden = false;
-  setRunningState(false);
-  // 切替待ち中は通常の「開始」ではなく、専用ボタンだけを主操作にします。
-  elements.start.disabled = true;
-  updateBodyClasses();
-  updateDisplay();
-  startRepeatingNotification();
-  // 繰り返すのは音だけです。デスクトップ通知はこの終了処理で1回だけ表示します。
-  showDesktopNotification(completedState);
-}
-
-// 時刻との差から残り時間を求め、タブが非表示でも大きくずれにくくします。
-function tick() {
-  const now = Date.now();
-  if (now < nextTickAt) return;
-
-  const elapsedSeconds = Math.floor((now - nextTickAt) / 1000) + 1;
-  remainingSeconds = Math.max(0, remainingSeconds - elapsedSeconds);
-  nextTickAt += elapsedSeconds * 1000;
-
-  if (remainingSeconds === 0) finishTimer();
-  updateDisplay();
-}
-
-function startTimer() {
-  if (timerId || appState === APP_STATES.WAITING_FOR_BREAK || appState === APP_STATES.WAITING_FOR_FOCUS) return;
-
-  // 音声はユーザー操作後に初期化する必要があります。
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-  if (AudioContextClass && !audioContext) audioContext = new AudioContextClass();
-  if (audioContext?.state === "suspended") audioContext.resume();
-
-  requestDesktopNotificationPermission();
-
-  nextTickAt = Date.now() + 1000;
-  timerId = window.setInterval(tick, 200);
-  elements.message.textContent = appState === APP_STATES.FOCUS ? "集中しています…" : "休憩中です…";
-  setRunningState(true);
-}
-
-function pauseTimer() {
-  if (!timerId) return;
-  window.clearInterval(timerId);
-  timerId = null;
-  elements.message.textContent = "一時停止しました。いつでも再開できます。";
-  setRunningState(false);
-}
-
-function resetTimer() {
-  if (timerId) window.clearInterval(timerId);
-  timerId = null;
-  stopRepeatingNotification();
-  appState = APP_STATES.FOCUS;
-  remainingSeconds = getDurations().focus;
-  completedPomodoros = 0;
-  elements.transition.hidden = true;
-  updateBodyClasses();
-  elements.message.textContent = "集中する準備はできましたか？";
-  setRunningState(false);
-  updateDisplay();
-}
-
-function updateBodyClasses() {
-  const isBreakState = appState === APP_STATES.BREAK || appState === APP_STATES.WAITING_FOR_FOCUS;
-  document.body.classList.toggle("focus-mode", !isBreakState);
-  document.body.classList.toggle("break-mode", isBreakState);
-  document.body.classList.toggle("transition-waiting", appState.includes("waiting"));
-  document.body.classList.toggle("test-mode", isTestMode);
-}
-
-// 目立つ切替ボタンで通知を止め、次モードの時間を設定して直ちに開始します。
-function startNextMode() {
-  if (appState === APP_STATES.WAITING_FOR_BREAK) {
-    appState = APP_STATES.BREAK;
-    remainingSeconds = getDurations().break;
-  } else if (appState === APP_STATES.WAITING_FOR_FOCUS) {
-    appState = APP_STATES.FOCUS;
-    remainingSeconds = getDurations().focus;
-  } else {
-    return;
-  }
-
-  stopRepeatingNotification();
-  elements.transition.hidden = true;
-  updateBodyClasses();
-  updateDisplay();
-  startTimer();
-}
-
-function toggleTestMode() {
-  isTestMode = !isTestMode;
-  elements.test.setAttribute("aria-pressed", String(isTestMode));
-  elements.testIndicator.hidden = !isTestMode;
-  resetTimer();
-}
-
-elements.start.addEventListener("click", startTimer);
-elements.pause.addEventListener("click", pauseTimer);
-elements.reset.addEventListener("click", resetTimer);
-elements.test.addEventListener("click", toggleTestMode);
-elements.transition.addEventListener("click", startNextMode);
-
-updateDisplay();
+$("start-button").addEventListener("click",startTimer);
+$("pause-button").addEventListener("click",pauseTimer);
+$("reset-button").addEventListener("click",resetTimer);
+$("test-button").addEventListener("click",toggleTestMode);
+$("transition-button").addEventListener("click",nextStep);
+$("extend-five").addEventListener("click",()=>extend(5));
+$("extend-ten").addEventListener("click",()=>extend(10));
+$("preset").value = data.settings.preset;
+$("long-enabled").checked = data.settings.longEnabled;
+$("long-minutes").value = String(data.settings.longMinutes);
+for (const id of ["preset","long-enabled","long-minutes"]) $(id).addEventListener("change",()=> {
+  sync();
+  data.settings = { preset: $("preset").value, longEnabled: $("long-enabled").checked, longMinutes: Number($("long-minutes").value) };
+  save(); render();
+});
+document.addEventListener("visibilitychange",()=>{ sync(); render(); });
+window.addEventListener("pagehide",()=>{ sync(); stopTimer(); save(); });
+window.addEventListener("pageshow",()=>render());
+// 日付表示は停止中も更新する。閉じている時間は記録しない。
+window.setInterval(()=>render(),1000);
+if (session.waiting) { prepareAudio(); startRepeatingNotification(); }
+save(); render();

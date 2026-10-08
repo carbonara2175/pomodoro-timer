@@ -212,3 +212,18 @@ body.transition-waiting .status-message { color: var(--text); font-size: 1.2rem;
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
 }
+
+[hidden] { display: none !important; }
+.extensions { display: flex; justify-content: center; gap: 8px; margin-top: 12px; }
+.break-message { margin: 8px 0 0; color: var(--accent); font-size: .9rem; overflow-wrap: anywhere; }
+.settings { margin-top: 16px; text-align: left; font-size: .9rem; }
+.settings summary { cursor: pointer; text-align: center; color: var(--muted); }
+.settings label { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.settings select { max-width: 100%; padding: 6px; font: inherit; border: 1px solid var(--border); border-radius: 6px; background: white; }
+.settings p, #save-warning { font-size: .8rem; color: var(--muted); }
+#focus-total { display: block; margin-top: 5px; }
+@media (max-height: 650px) {
+  .extensions { margin-top: 6px; }
+  .settings { margin-top: 8px; }
+  .break-message { margin-top: 4px; font-size: .82rem; }
+}
